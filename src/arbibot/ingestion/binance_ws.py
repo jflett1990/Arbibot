@@ -11,7 +11,7 @@ from typing import Any
 import websockets
 
 from arbibot.core.errors import EventValidationError
-from arbibot.core.events import BaseEvent, SpotTick
+from arbibot.core.events import BaseEvent, SpotBookTicker, SpotTick
 from arbibot.core.time import now_monotonic_ns, now_wall_ms
 
 
@@ -31,14 +31,12 @@ def parse_binance_payload(
     payload: dict[str, Any],
     recv_wall_ts_ms: int,
     recv_monotonic_ns: int,
-) -> SpotTick | None:
-    """Normalize a Binance stream payload into SpotTick when supported."""
+) -> SpotTick | SpotBookTicker | None:
     if "stream" in payload and "data" in payload:
         data = payload.get("data")
         if not isinstance(data, dict):
             raise BinancePayloadError("Combined stream payload must contain object data")
         return _parse_event_data(data, recv_wall_ts_ms, recv_monotonic_ns)
-
     return _parse_event_data(payload, recv_wall_ts_ms, recv_monotonic_ns)
 
 
@@ -46,37 +44,52 @@ def _parse_event_data(
     data: dict[str, Any],
     recv_wall_ts_ms: int,
     recv_monotonic_ns: int,
-) -> SpotTick | None:
+) -> SpotTick | SpotBookTicker | None:
     event_type = data.get("e")
-    if event_type not in {"aggTrade", "trade"}:
-        return None
+    if event_type is None and all(k in data for k in ("b", "B", "a", "A")):
+        event_type = "bookTicker"
+    if event_type in {"aggTrade", "trade"}:
+        symbol = _require_str(data, "s")
+        price = _parse_positive_float(_require_str(data, "p"), "p")
+        qty = _parse_positive_float(_require_str(data, "q"), "q")
+        source_ts_ms = _extract_trade_timestamp_ms(data, event_type)
+        trade_id = str(_require_int(data, "a" if event_type == "aggTrade" else "t"))
+        return SpotTick(
+            event_id=f"binance-{event_type}-{symbol}-{trade_id}",
+            source="binance",
+            source_ts_ms=source_ts_ms,
+            recv_wall_ts_ms=recv_wall_ts_ms,
+            recv_monotonic_ns=recv_monotonic_ns,
+            sequence_id=trade_id,
+            symbol=symbol,
+            price=price,
+            size=qty,
+            trade_id=trade_id,
+            stream_event_type=event_type,
+        )
 
-    symbol = _require_str(data, "s")
+    if event_type == "bookTicker":
+        symbol = _require_str(data, "s")
+        bid_price = _parse_positive_float(_require_str(data, "b"), "b")
+        ask_price = _parse_positive_float(_require_str(data, "a"), "a")
+        bid_size = _parse_non_negative_float(_require_str(data, "B"), "B")
+        ask_size = _parse_non_negative_float(_require_str(data, "A"), "A")
+        source_ts_ms = _require_int(data, "E") if "E" in data else recv_wall_ts_ms
+        return SpotBookTicker(
+            event_id=f"binance-bookTicker-{symbol}-{source_ts_ms}",
+            source="binance",
+            source_ts_ms=source_ts_ms,
+            recv_wall_ts_ms=recv_wall_ts_ms,
+            recv_monotonic_ns=recv_monotonic_ns,
+            symbol=symbol,
+            bid_price=bid_price,
+            bid_size=bid_size,
+            ask_price=ask_price,
+            ask_size=ask_size,
+            stream_event_type="bookTicker",
+        )
 
-    price = _parse_positive_float(_require_str(data, "p"), "p")
-    qty = _parse_positive_float(_require_str(data, "q"), "q")
-    source_ts_ms = _extract_trade_timestamp_ms(data, event_type)
-
-    if event_type == "aggTrade":
-        trade_id = str(_require_int(data, "a"))
-    else:
-        trade_id = str(_require_int(data, "t"))
-
-    event_id = f"binance-{event_type}-{symbol}-{trade_id}"
-
-    return SpotTick(
-        event_id=event_id,
-        source="binance",
-        source_ts_ms=source_ts_ms,
-        recv_wall_ts_ms=recv_wall_ts_ms,
-        recv_monotonic_ns=recv_monotonic_ns,
-        sequence_id=trade_id,
-        symbol=symbol,
-        price=price,
-        size=qty,
-        trade_id=trade_id,
-        stream_event_type=event_type,
-    )
+    return None
 
 
 def _extract_trade_timestamp_ms(data: dict[str, Any], event_type: str) -> int:
@@ -111,9 +124,17 @@ def _parse_positive_float(raw: str, field: str) -> float:
     return value
 
 
-class BinanceSpotMarketDataClient:
-    """Binance spot client emitting normalized internal events."""
+def _parse_non_negative_float(raw: str, field: str) -> float:
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise BinancePayloadError(f"Invalid numeric field: {field}") from exc
+    if value < 0:
+        raise BinancePayloadError(f"Numeric field must be >= 0: {field}")
+    return value
 
+
+class BinanceSpotMarketDataClient:
     source = "binance"
 
     def __init__(
@@ -123,8 +144,7 @@ class BinanceSpotMarketDataClient:
         config: BinanceClientConfig | None = None,
     ) -> None:
         self.symbol = symbol.upper()
-        default_streams = [f"{self.symbol.lower()}@aggTrade"]
-        self.streams = streams if streams is not None else default_streams
+        self.streams = streams if streams is not None else [f"{self.symbol.lower()}@aggTrade"]
         self.config = config or BinanceClientConfig()
         self._stop_event = asyncio.Event()
 
@@ -140,8 +160,7 @@ class BinanceSpotMarketDataClient:
     async def _events_impl(self) -> AsyncIterator[BaseEvent]:
         delay_ms = self.config.reconnect_initial_delay_ms
         while not self._stop_event.is_set():
-            stream_suffix = "/".join(self.streams)
-            uri = f"{self.config.url}?streams={stream_suffix}"
+            uri = f"{self.config.url}?streams={'/'.join(self.streams)}"
             try:
                 async with websockets.connect(uri) as ws:
                     delay_ms = self.config.reconnect_initial_delay_ms
@@ -150,16 +169,12 @@ class BinanceSpotMarketDataClient:
                             raw_message = await asyncio.wait_for(ws.recv(), timeout=1.0)
                         except TimeoutError:
                             continue
-
-                        recv_wall = now_wall_ms()
-                        recv_mono = now_monotonic_ns()
                         payload = json.loads(raw_message)
                         if not isinstance(payload, dict):
                             raise BinancePayloadError(
                                 "WebSocket message must decode to JSON object"
                             )
-
-                        parsed = parse_binance_payload(payload, recv_wall, recv_mono)
+                        parsed = parse_binance_payload(payload, now_wall_ms(), now_monotonic_ns())
                         if parsed is None:
                             if self.config.ignore_unsupported_events:
                                 continue

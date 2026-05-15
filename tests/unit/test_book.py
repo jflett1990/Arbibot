@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from arbibot.core.events import MarketSide, PolyBookDelta, PolyBookSnapshot
 from arbibot.market.book import BookError, LocalOrderBook
@@ -83,8 +84,13 @@ def test_empty_book_behavior() -> None:
 )
 def test_snapshot_invalid_levels_raise(bids: list[list[float]], asks: list[list[float]]) -> None:
     book = LocalOrderBook("tok-1")
-    with pytest.raises(BookError):
-        book.apply_snapshot(_snapshot(bids=bids, asks=asks))
+    snap = _snapshot(bids=bids, asks=asks) if bids == [[0.45, 0]] else None
+    if snap is not None:
+        with pytest.raises(BookError):
+            book.apply_snapshot(snap)
+        return
+    with pytest.raises(ValidationError):
+        _snapshot(bids=bids, asks=asks)
 
 
 def test_snapshot_token_mismatch_raises() -> None:

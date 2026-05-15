@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from arbibot.core.events import SpotTick
+from arbibot.core.events import SpotBookTicker, SpotTick
 from arbibot.ingestion.binance_ws import (
     BinancePayloadError,
     BinanceSpotMarketDataClient,
@@ -41,10 +41,11 @@ def test_parse_trade_fixture_to_spot_tick() -> None:
     assert tick.stream_event_type == "trade"
 
 
-def test_parse_book_ticker_fixture_is_ignored_without_quote_schema() -> None:
+def test_parse_book_ticker_fixture_parses_to_spot_book_ticker() -> None:
     payload = _load("book_ticker.json")
     tick = parse_binance_payload(payload, recv_wall_ts_ms=10, recv_monotonic_ns=11)
-    assert tick is None
+    assert isinstance(tick, SpotBookTicker)
+    assert tick.stream_event_type == "bookTicker"
 
 
 def test_invalid_missing_price_fails() -> None:

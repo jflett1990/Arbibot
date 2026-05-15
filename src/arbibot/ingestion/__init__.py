@@ -1,35 +1,15 @@
-"""Vendor-neutral ingestion contracts and deterministic mocks."""
-
-from arbibot.ingestion.binance_ws import (
-    BinanceClientConfig,
-    BinancePayloadError,
-    BinanceSpotMarketDataClient,
-    parse_binance_payload,
+from arbibot.ingestion.cryptoquant_adapter import (
+    CryptoQuantSignalClient,
+    parse_cryptoquant_metric,
 )
-from arbibot.ingestion.interfaces import (
-    EventStreamClient,
-    ExternalSignalClient,
-    PredictionMarketDataClient,
-    SpotMarketDataClient,
-    persist_stream,
-)
-from arbibot.ingestion.mock_clients import (
-    MockExternalSignalClient,
-    MockPredictionMarketDataClient,
-    MockSpotMarketDataClient,
+from arbibot.ingestion.tradingview_adapter import (
+    TradingViewSignalClient,
+    parse_tradingview_payload,
 )
 
 __all__ = [
-    "BinanceClientConfig",
-    "BinancePayloadError",
-    "BinanceSpotMarketDataClient",
-    "EventStreamClient",
-    "ExternalSignalClient",
-    "MockExternalSignalClient",
-    "MockPredictionMarketDataClient",
-    "MockSpotMarketDataClient",
-    "PredictionMarketDataClient",
-    "SpotMarketDataClient",
-    "parse_binance_payload",
-    "persist_stream",
+    "CryptoQuantSignalClient",
+    "TradingViewSignalClient",
+    "parse_cryptoquant_metric",
+    "parse_tradingview_payload",
 ]
