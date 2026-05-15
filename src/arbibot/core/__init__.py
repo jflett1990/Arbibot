@@ -12,6 +12,8 @@ from arbibot.core.errors import (
 )
 from arbibot.core.events import (
     BaseEvent,
+    BookLevel,
+    BookSide,
     DecisionAction,
     DecisionRecord,
     ExternalSignal,
@@ -30,6 +32,7 @@ from arbibot.core.events import (
     SignalDirection,
     SignalState,
     SpotBar,
+    SpotBookTicker,
     SpotTick,
 )
 from arbibot.core.time import event_age_ms, now_monotonic_ns, now_wall_ms, validate_timestamp_ms
@@ -39,6 +42,8 @@ __all__ = [
     "ArbibotError",
     "BaseEvent",
     "ConfigError",
+    "BookLevel",
+    "BookSide",
     "DecisionAction",
     "DecisionRecord",
     "EventValidationError",
@@ -60,6 +65,7 @@ __all__ = [
     "SignalDirection",
     "SignalState",
     "SpotBar",
+    "SpotBookTicker",
     "SpotTick",
     "StaleDataError",
     "UnknownOrderStateError",
