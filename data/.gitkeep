@@ -1,0 +1,3 @@
+# Runtime data directory
+
+Event logs, SQLite databases, DuckDB files, and Parquet exports are ignored by git.
