@@ -1,0 +1,6 @@
+mode: live
+live_trading_enabled: false
+pilot_mode: false
+startup_requires_confirmation: true
+max_order_size_usd: 0
+kill_switch_required: true
