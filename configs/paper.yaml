@@ -1,0 +1,9 @@
+mode: paper
+live_trading_enabled: false
+paper:
+  pessimistic_fills: true
+  inject_latency_ms:
+    data_delay: 100
+    decision_delay: 5
+    order_submit_delay: 300
+    cancel_delay: 300
