@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Literal
 
 from arbibot.core.errors import EventValidationError
-from arbibot.core.events import PolyBookDelta, PolyBookSnapshot
+from arbibot.core.events import BookLevel, BookSide, MarketSide, PolyBookDelta, PolyBookSnapshot
 
 
 class BookError(EventValidationError):
@@ -71,13 +71,21 @@ class LocalOrderBook:
         if not self.price_conforms_to_tick(price):
             raise BookError(f"Price {price} does not conform to tick_size {self.tick_size}")
 
-        side = event.side.upper()
-        if side == "BUY":
+        resolved = event.book_side
+        if resolved is None:
+            if event.side is MarketSide.BUY:
+                resolved = BookSide.BID
+            elif event.side is MarketSide.SELL:
+                resolved = BookSide.ASK
+            else:
+                raise BookError("Delta requires book_side or legacy side")
+
+        if resolved is BookSide.BID:
             book = self.bids
-        elif side == "SELL":
+        elif resolved is BookSide.ASK:
             book = self.asks
         else:
-            raise BookError(f"Invalid side: {event.side}")
+            raise BookError(f"Invalid book side: {resolved}")
 
         if size == 0:
             book.pop(price, None)
@@ -183,16 +191,14 @@ class LocalOrderBook:
 
     def _levels_to_map(
         self,
-        levels: list[list[float]],
+        levels: list[BookLevel],
         allow_zero_size: bool,
         tick_size: Decimal | None,
     ) -> dict[Decimal, Decimal]:
         result: dict[Decimal, Decimal] = {}
         for raw in levels:
-            if len(raw) != 2:
-                raise BookError("Each snapshot level must contain [price, size]")
-            price = self._coerce_decimal(raw[0], "price")
-            size = self._coerce_decimal(raw[1], "size")
+            price = self._coerce_decimal(raw.price, "price")
+            size = self._coerce_decimal(raw.size, "size")
             if price <= 0:
                 raise BookError(f"Snapshot price must be > 0, got {price}")
             if size < 0:
