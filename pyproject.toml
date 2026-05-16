@@ -46,3 +46,6 @@ ignore = []
 python_version = "3.11"
 strict = true
 mypy_path = "src"
+
+[project.scripts]
+arbibot = "arbibot.apps.cli:main"

@@ -13,3 +13,5 @@ data/*
 *.duckdb
 *.parquet
 .DS_Store
+
+*.egg-info/
