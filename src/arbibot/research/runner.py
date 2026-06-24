@@ -70,6 +70,15 @@ class ResearchRunOptions:
     debug: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class PendingDecision:
+    decision_time_ms: int
+    market_id: str | None
+    token_id: str | None
+    binance_price: float | None
+    impulse_return_bps: float | None
+
+
 @dataclass(slots=True)
 class ReplayState:
     impulse: RollingImpulse
@@ -79,6 +88,7 @@ class ReplayState:
     threshold_bps: float
     gates_cfg: dict[str, Any]
     rows: list[dict[str, Any]]
+    pending: list[PendingDecision]
     counts: Counter[str]
     failures: Counter[str]
     malformed_events: int = 0
@@ -198,6 +208,7 @@ def _new_replay_state(hyp: ResearchHypothesis, options: ResearchRunOptions) -> R
         threshold_bps=float((hyp.entry_conditions or {}).get("impulse_threshold_bps", 0.0)),
         gates_cfg=gates_cfg,
         rows=[],
+        pending=[],
         counts=Counter(),
         failures=Counter(),
     )
@@ -213,6 +224,7 @@ def _replay_store(options: ResearchRunOptions, state: ReplayState) -> None:
                 break
             state.counts[stored.event_type] += 1
             try:
+                _flush_due_decisions(state, stored.source_ts_ms)
                 data = json.loads(stored.payload_json)
                 _apply_stored_event(stored.event_type, data, state)
             except BookError:
@@ -223,6 +235,7 @@ def _replay_store(options: ResearchRunOptions, state: ReplayState) -> None:
                 state.malformed_events += 1
                 if options.debug:
                     raise
+        _flush_all_decisions(state)
     finally:
         store.close()
 
@@ -259,14 +272,43 @@ def _observe_binance_price(ts_ms: int, price: float, state: ReplayState) -> None
     impulse_bps = state.impulse.add(ts_ms, price)
     if abs(impulse_bps or 0.0) < state.threshold_bps:
         return
+    state.pending.append(
+        PendingDecision(
+            decision_time_ms=ts_ms + state.latency_ms,
+            market_id=state.market_id,
+            token_id=state.token_id,
+            binance_price=state.latest_price,
+            impulse_return_bps=impulse_bps,
+        )
+    )
+
+
+def _flush_due_decisions(state: ReplayState, next_event_ts_ms: int) -> None:
+    due = [pending for pending in state.pending if pending.decision_time_ms < next_event_ts_ms]
+    if not due:
+        return
+    state.pending = [
+        pending for pending in state.pending if pending.decision_time_ms >= next_event_ts_ms
+    ]
+    for pending in due:
+        _materialize_pending_decision(state, pending)
+
+
+def _flush_all_decisions(state: ReplayState) -> None:
+    for pending in state.pending:
+        _materialize_pending_decision(state, pending)
+    state.pending = []
+
+
+def _materialize_pending_decision(state: ReplayState, pending: PendingDecision) -> None:
     state.rows.append(
         _row(
-            ts_ms + state.latency_ms,
-            state.market_id,
-            state.token_id,
-            state.latest_price,
+            pending.decision_time_ms,
+            state.market_id or pending.market_id,
+            state.token_id or pending.token_id,
+            pending.binance_price,
             state.book,
-            impulse_bps,
+            pending.impulse_return_bps,
             state.latency_ms,
             state.fee_bps,
             state.slippage_bps,

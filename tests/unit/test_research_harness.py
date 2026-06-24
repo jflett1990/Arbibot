@@ -251,3 +251,110 @@ def test_research_critique_cli_reruns_missing_model(tmp_path, capsys, monkeypatc
     assert main(["research", "critique", "--run", str(run_dir)]) == 0
     qa = json.loads((run_dir / "qa_report.json").read_text())
     assert qa["ai_critique_status"] == "skipped_missing_model_config"
+
+
+def test_latency_evaluates_against_delayed_book(tmp_path, capsys):
+    hyp = write_hypothesis_template("impulse lag latency", tmp_path, HypothesisKind.IMPULSE_LAG)
+    db = tmp_path / "events.sqlite3"
+    store = SQLiteEventStore(db)
+    base = 1_700_100_000_000
+    store.append(
+        PolyBookSnapshot(
+            event_id="lat-b1",
+            source="polymarket",
+            source_ts_ms=base,
+            recv_wall_ts_ms=base,
+            recv_monotonic_ns=1,
+            market_id="m",
+            outcome="UP",
+            token_id="t",
+            bids=[[0.50, 10]],
+            asks=[[0.51, 10]],
+        )
+    )
+    store.append(
+        SpotTick(
+            event_id="lat-s1",
+            source="binance",
+            source_ts_ms=base + 1_000,
+            recv_wall_ts_ms=base + 1_000,
+            recv_monotonic_ns=2,
+            symbol="BTCUSDT",
+            price=100.0,
+        )
+    )
+    store.append(
+        SpotTick(
+            event_id="lat-s2",
+            source="binance",
+            source_ts_ms=base + 31_000,
+            recv_wall_ts_ms=base + 31_000,
+            recv_monotonic_ns=3,
+            symbol="BTCUSDT",
+            price=101.0,
+        )
+    )
+    store.append(
+        PolyBookDelta(
+            event_id="lat-d1",
+            source="polymarket",
+            source_ts_ms=base + 31_500,
+            recv_wall_ts_ms=base + 31_500,
+            recv_monotonic_ns=4,
+            market_id="m",
+            outcome="UP",
+            token_id="t",
+            book_side=BookSide.ASK,
+            price=0.51,
+            size=0,
+        )
+    )
+    store.append(
+        PolyBookDelta(
+            event_id="lat-d2",
+            source="polymarket",
+            source_ts_ms=base + 31_500,
+            recv_wall_ts_ms=base + 31_500,
+            recv_monotonic_ns=5,
+            market_id="m",
+            outcome="UP",
+            token_id="t",
+            book_side=BookSide.ASK,
+            price=0.99,
+            size=10,
+        )
+    )
+    store.close()
+
+    assert (
+        main(
+            [
+                "research",
+                "run",
+                "--hypothesis",
+                str(hyp),
+                "--store",
+                str(db),
+                "--out",
+                str(tmp_path / "runs"),
+                "--latency-ms",
+                "1000",
+                "--skip-ai",
+            ]
+        )
+        == 0
+    )
+    out = Path(capsys.readouterr().out.strip())
+    rows = (out / "replay_results.csv").read_text(encoding="utf-8")
+    assert ",0.99," in rows
+
+
+def test_promotion_decision_requires_median_edge():
+    from arbibot.research.hypothesis import default_hypothesis
+    from arbibot.research.runner import _promotion_decision
+
+    hyp = default_hypothesis("median edge test")
+    hyp.promotion_criteria["min_passing_rows"] = 1
+    hyp.promotion_criteria["min_median_cost_adjusted_edge_bps"] = 5.0
+    rows = [{"gate_result": "pass", "cost_adjusted_edge_bps": 1.0}]
+    assert _promotion_decision(hyp, rows, rows) == "revise"
