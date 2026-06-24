@@ -16,6 +16,7 @@ dependencies = [
   "numpy>=1.26",
   "pandas>=2.2",
   "duckdb>=1.0",
+  "openai>=1.40",
 ]
 
 [project.optional-dependencies]

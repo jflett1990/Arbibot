@@ -11,3 +11,5 @@ __all__ = [
     "run_status",
     "run_validate_config",
 ]
+
+from arbibot.apps.commands.research import run_research_critique, run_research_init, run_research_inspect, run_research_list, run_research_run
