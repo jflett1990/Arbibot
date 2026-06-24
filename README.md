@@ -59,3 +59,14 @@ pytest
 This system should default to paper mode. Live trading requires explicit config, tested order-state reconciliation, hard risk gates, and a working kill switch.
 
 If a future implementation cannot explain every trade/no-trade decision from persisted records, it is not production-ready.
+
+## Research Sprint Harness
+
+Arbibot includes a local-first research harness for deterministic replay experiments. Example:
+
+```bash
+python -m arbibot research init --name impulse_lag_test
+python -m arbibot research run --hypothesis research/hypotheses/impulse_lag_test.yaml --store data/session.sqlite --skip-ai
+```
+
+See `docs/research_harness.md` for packet outputs, hypothesis schema, and optional Bedrock/OpenAI-compatible critique configuration.
