@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
@@ -67,23 +68,35 @@ class ResearchModelClient:
                 text="AI critique skipped: openai package is not installed.",
                 skipped_reason="skipped_missing_openai_sdk",
             )
+
         client = OpenAI(base_url=self.config.base_url, api_key=self.config.api_key)
         prompt = _load_prompt() + "\n\nINPUT:\n" + input.model_dump_json(indent=2)
         try:
-            if hasattr(client, "responses"):
-                resp = client.responses.create(model=self.config.model, input=prompt)  # type: ignore[arg-type]
-                text = getattr(resp, "output_text", None) or str(resp)
-            else:
-                raise AttributeError("responses unavailable")
+            text = self._responses_create(client, prompt)
         except Exception:
-            chat = client.chat.completions.create(
-                model=self.config.model, messages=[{"role": "user", "content": prompt}]
-            )  # type: ignore[arg-type]
-            text = chat.choices[0].message.content or ""
+            text = self._chat_completions_create(client, prompt)
         return ResearchCritiqueOutput(status="generated", text=text)
+
+    def _responses_create(self, client: Any, prompt: str) -> str:
+        if not hasattr(client, "responses"):
+            raise AttributeError("Responses API is unavailable on installed OpenAI SDK")
+        response = client.responses.create(model=self.config.model, input=prompt)
+        text = getattr(response, "output_text", None)
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("Responses API returned no output_text")
+        return text
+
+    def _chat_completions_create(self, client: Any, prompt: str) -> str:
+        response = client.chat.completions.create(
+            model=self.config.model,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.choices[0].message.content
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("Chat Completions API returned no content")
+        return text
 
 
 def _load_prompt() -> str:
-    return (os.path.join(os.path.dirname(__file__), "prompts", "research_critique.md")) and open(
-        os.path.join(os.path.dirname(__file__), "prompts", "research_critique.md"), encoding="utf-8"
-    ).read()
+    prompt_path = Path(__file__).parent / "prompts" / "research_critique.md"
+    return prompt_path.read_text(encoding="utf-8")

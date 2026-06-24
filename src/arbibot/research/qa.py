@@ -11,6 +11,7 @@ REQUIRED = [
     "replay_results.csv",
     "edge_summary.md",
     "failure_modes.md",
+    "ai_critique.md",
     "next_experiments.md",
     "qa_report.json",
     "manifest.json",

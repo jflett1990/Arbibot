@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from arbibot.apps.cli import main
-from arbibot.core.events import PolyBookSnapshot, SpotTick
+from arbibot.core.events import BookSide, PolyBookDelta, PolyBookSnapshot, SpotBookTicker, SpotTick
 from arbibot.research.features import RollingImpulse, build_feature_row
 from arbibot.research.gates import GateCode, evaluate_gates
 from arbibot.research.hypothesis import HypothesisKind, load_hypothesis, write_hypothesis_template
@@ -43,6 +43,35 @@ def _store(path: Path) -> None:
             recv_monotonic_ns=2,
             symbol="BTCUSDT",
             price=100.0,
+        )
+    )
+    s.append(
+        PolyBookDelta(
+            event_id="d1",
+            source="polymarket",
+            source_ts_ms=base + 2_000,
+            recv_wall_ts_ms=base + 2_000,
+            recv_monotonic_ns=4,
+            market_id="m",
+            outcome="UP",
+            token_id="t",
+            book_side=BookSide.ASK,
+            price=0.52,
+            size=12,
+        )
+    )
+    s.append(
+        SpotBookTicker(
+            event_id="bt1",
+            source="binance",
+            source_ts_ms=base + 30_500,
+            recv_wall_ts_ms=base + 30_500,
+            recv_monotonic_ns=5,
+            symbol="BTCUSDT",
+            bid_price=100.8,
+            bid_size=1,
+            ask_price=101.0,
+            ask_size=1,
         )
     )
     s.append(
@@ -188,6 +217,37 @@ def test_deterministic_research_run_cli(tmp_path, capsys):
     )
     assert rc == 0
     out = Path(capsys.readouterr().out.strip())
-    assert (out / "manifest.json").exists()
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert "qa_report.json" in manifest["output_files"]
+    assert "manifest.json" in manifest["output_files"]
     qa = json.loads((out / "qa_report.json").read_text())
     assert qa["replay_status"] == "passed"
+    assert not any("manifest.json" in reason for reason in qa["blocked_reasons"])
+
+
+def test_research_critique_cli_reruns_missing_model(tmp_path, capsys, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ARBIBOT_RESEARCH_MODEL", raising=False)
+    hyp = write_hypothesis_template("impulse lag critique", tmp_path, HypothesisKind.IMPULSE_LAG)
+    db = tmp_path / "events.sqlite3"
+    _store(db)
+    assert (
+        main(
+            [
+                "research",
+                "run",
+                "--hypothesis",
+                str(hyp),
+                "--store",
+                str(db),
+                "--out",
+                str(tmp_path / "runs"),
+                "--skip-ai",
+            ]
+        )
+        == 0
+    )
+    run_dir = Path(capsys.readouterr().out.strip())
+    assert main(["research", "critique", "--run", str(run_dir)]) == 0
+    qa = json.loads((run_dir / "qa_report.json").read_text())
+    assert qa["ai_critique_status"] == "skipped_missing_model_config"
